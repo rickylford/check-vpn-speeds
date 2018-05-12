@@ -26,7 +26,7 @@ TIMEOUT=10
 PINGTHRESHOLD=100
 
 ##################################################################
-## DO NOT EDIT BELOW THIS LINE
+# DO NOT EDIT BELOW THIS LINE
 ##################################################################
 
 BESTSPEED=0
