@@ -2,7 +2,9 @@
 
 This a simple script that I run from within my "/etc/openvpn" folder to test all of the available conf connection files. To use this simple script, make sure all of your conf files have the line:
 
+```
 auth-user-pass /etc/openvpn/login
+```
 
 This line usually has only "auth-user-pass" without the included "login" file. This means you will also need to create the "login" file with the first line being your VPN provider's user name, and the second line being the VPN provider's password. Chmod that fill to 600 so that only the root user can access it.
 
