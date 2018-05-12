@@ -5,14 +5,14 @@ ext=".conf"
 
 service_stop() {
         systemctl stop openvpn
-        sleep 5
+        sleep 2
 }
 
 service_start() {
         echo "-------------------------------------------------"
         echo "CONNECTION: openvpn@$1"
         systemctl start openvpn@$1.service
-        sleep 5
+        sleep 8
 }
 
 speed_test() {
