@@ -12,6 +12,9 @@ DIR="/etc/openvpn/"
 # DEFAULT IS .conf
 EXT=".conf"
 
+# LOCATION OF THE SPEEDTEST-CLI EXECUTABLE
+SCLI="/etc/openvpn"
+
 ##################################################################
 ## DO NOT EDIT BELOW THIS LINE
 ##################################################################
@@ -47,7 +50,7 @@ speed_test() {
         IPADDRESS=$(curl -s ipinfo.io/ip)
         echo "INFO: $IPCITY / $IPADDRESS"
 
-        TESTRESULT=$(./speedtest-cli --no-upload --no-pre-allocate | grep Download | cut -d ' ' -f 2 | cut -d '.' -f 1)
+        TESTRESULT=$($SCLI/speedtest-cli --no-upload --no-pre-allocate | grep Download | cut -d ' ' -f 2 | cut -d '.' -f 1)
         echo "DOWNLOAD: $TESTRESULT MB/s"
 
         if [[ $TESTRESULT -gt $BESTSPEED ]]
