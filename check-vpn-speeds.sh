@@ -13,10 +13,17 @@ DIR="/etc/openvpn"
 EXT=".conf"
 
 # LOCATION OF THE SPEEDTEST-CLI EXECUTABLE
-SCLI="/data/Scripts"
+SCLI="/etc/openvpn"
 
 # SECONDS TO WAIT UNTIL VPN CONNECTIONS TIMEOUT AND MOVE ON
 TIMEOUT=10
+
+# BEFORE WE BEGIN TO TEST THE DOWNLOAD SPEED FOR A SERVER WE
+# PING THE ADDRESS FIRST. IF THE PING RESPONSE IS GREATER THAN
+# THE THRESHOLD DEFINED HERE, WE WILL SKIP THAT URL AND NOT
+# TEST IT. THIS PREVENTS US FROM RUNNING SPEED TESTS ON URLS
+# THAT ARE GOING TO TAKE FOREVER TO COMPLETE.
+PINGTHRESHOLD=100
 
 ##################################################################
 ## DO NOT EDIT BELOW THIS LINE
@@ -41,8 +48,6 @@ service_stop() {
 
 # STARTS OPENVPN WITH A SPECIFIC CONFIGURATION FILE
 service_start() {
-        echo "FILE: $1$EXT"
-
         systemctl start openvpn@$1.service
 
 	# THIS SECTION WILL FIRST SET A COUNTER TO 0, AT WHICH POINT THE SCRIPT
@@ -68,7 +73,7 @@ speed_test() {
 	# SETTINGS, WE WANT TO MAKE SURE WE ARE CONNECTED TO THE VPN. OTHERWISE, THE SPEEDTEST
 	# WILL BE OUR OWN PROVIDER, AND THE BESTSPEEDPROVIDER WILL BE THE ONE THAT FAILED
 	while [ "0" == `sudo ifconfig | grep tun0 | wc -l` ]; do
-		echo "VPN CONNECTION FAILED, MOVING ON..."
+		echo "VPN CONNECTION FAILED. SKIPPING."
 		return 0
         done
 
@@ -97,17 +102,28 @@ do
         # FIRST, WE SHOULD STOP OPENVPN JUST TO MAKE SURE WE DON'T HAVE AN ACTIVE CONNECTION
         service_stop
 
-        # START THE SERVICE
-	echo "TESTING $FILECOUNT OF $TOTALFILES"
-        service_start ${file}
+	echo "FILE: ${file}$EXT ($FILECOUNT of $TOTALFILES)"
 
-        # CONDUCT THE SPEED TEST
-        speed_test ${file}
+	URLTOTEST=$(awk '/^remote /{print $2}' ${file}$EXT)
+	PINGRESPONSEFLOAT=$(ping -c 4 $URLTOTEST | tail -1| awk '{print $4}' | cut -d '/' -f 2)
+	PINGRESPONSE=${PINGRESPONSEFLOAT%.*}
 
-        # STOP THE SERVICE SO THAT WE CAN MOVE ON
-        service_stop
+	if [[ $PINGRESPONSE -lt $PINGTHRESHOLD ]]
+	then
+	        # START THE SERVICE
+	        service_start ${file}
 
-        echo ""
+	        # CONDUCT THE SPEED TEST
+	        speed_test ${file}
+
+	        # STOP THE SERVICE SO THAT WE CAN MOVE ON
+	        service_stop
+
+	        echo ""
+	else
+		echo "PING RESPONSE TOO HIGH ($PINGRESPONSEFLOAT). SKIPPING."
+		echo ""
+	fi
 	FILECOUNT=$((FILECOUNT+1))
 done
 
