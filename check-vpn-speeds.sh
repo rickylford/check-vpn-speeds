@@ -88,8 +88,8 @@ firewall_on() {
 		firewall_reset
 
 		iptables -t nat -A POSTROUTING -o $VPNINTERFACE -j MASQUERADE > /dev/null 2>&1
-		iptables -A FORWARD -i enp4s0 -o $VPNINTERFACE -j ACCEPT > /dev/null 2>&1
-		iptables -A FORWARD -i tun0 -o $ETHERNETINTERFACE -j ACCEPT > /dev/null 2>&1
+		iptables -A FORWARD -i $ETHERNETINTERFACE -o $VPNINTERFACE -j ACCEPT > /dev/null 2>&1
+		iptables -A FORWARD -i $VPNINTERFACE -o $ETHERNETINTERFACE -j ACCEPT > /dev/null 2>&1
 		iptables -P FORWARD DROP > /dev/null 2>&1
 
 		netfilter-persistent save > /dev/null 2>&1
