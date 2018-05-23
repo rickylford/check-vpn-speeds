@@ -13,7 +13,7 @@ DIR="/etc/openvpn"
 EXT=".conf"
 
 # LOCATION OF THE SPEEDTEST-CLI EXECUTABLE
-SCLI="/data/Scripts"
+SCLI="/etc/openvpn"
 
 # SECONDS TO WAIT UNTIL VPN CONNECTIONS TIMEOUT AND MOVE ON
 TIMEOUT=10
@@ -28,19 +28,81 @@ PINGTHRESHOLD=100
 # LOG FILE LOCATION WITH FULL PATH
 LOGLOCATION="/var/log/check-vpn-speeds.log"
 
+# INTERFACE FOR VPN CONNECTIONS
+VPNINTERFACE="tun0"
+
+# ETHERNET INTERFACE
+ETHERNETINTERFACE="enp4s0"
+
+# DO YOU WANT TO AUTOMATICALLY CONFIGURE YOUR FIREWALL?
+# WARNING: THIS WILL DELETE AND OVERWRITE ANY CURRENT
+# FIREWALL RULES YOU MAY HAVE IN PLACE
+CONFIGFIREWALL=true
+
 ##################################################################
 # DO NOT EDIT BELOW THIS LINE
 ##################################################################
 
+# -------------------------------------------------- #
+# MAKE SURE EVERYTHING WE NEED EXISTS OR IS INTALLED #
+# -------------------------------------------------- #
+
+ETHERNETEXISTS=$(ifconfig | grep $ETHERNETINTERFACE)
+
+if [ ! -f $SCLI/speedtest-cli ]; then
+	echo "ERROR: speedtest-cli does not exist. Exiting."
+	exit 1
+elif [ ! -f /usr/sbin/netfilter-persistent ]; then
+	if [ "$CONFIGFIREWALL" = true ]; then
+		echo "ERROR: netfilter-persistent not installed. Exiting."
+		exit 1
+	fi
+elif [ -z "$ETHERNETEXISTS" ]; then
+	echo "ERROR: $ETHERNETINTERFACE does not exist. Exiting."
+	exit 1
+fi
+
+# ---------------------------- #
+# PROCEED WITH EVERYTHING ELSE #
+# ---------------------------- #
+
 BESTSPEED=0
 BESTSPEEDPROVIDER=""
 
+# RESET ALL UFW RULES TO START FROM SCRATCH
+firewall_reset() {
+	if [ "$CONFIGFIREWALL" = true ]; then
+		iptables -P FORWARD ACCEPT > /dev/null 2>&1
+		iptables -P OUTPUT ACCEPT > /dev/null 2>&1
+		iptables -t nat -F > /dev/null 2>&1
+		iptables -t mangle -F > /dev/null 2>&1
+		iptables -F > /dev/null 2>&1
+		iptables -X > /dev/null 2>&1
+		netfilter-persistent save > /dev/null 2>&1
+	fi
+}
+
+# SET AND ENABLE ALL OF THE APPROPRIATE UFW RULES
+firewall_on() {
+	if [ "$CONFIGFIREWALL" = true ]; then
+		firewall_reset
+
+		iptables -t nat -A POSTROUTING -o $VPNINTERFACE -j MASQUERADE > /dev/null 2>&1
+		iptables -A FORWARD -i enp4s0 -o $VPNINTERFACE -j ACCEPT > /dev/null 2>&1
+		iptables -A FORWARD -i tun0 -o $ETHERNETINTERFACE -j ACCEPT > /dev/null 2>&1
+		iptables -P FORWARD DROP > /dev/null 2>&1
+
+		netfilter-persistent save > /dev/null 2>&1
+	fi
+}
+
 # STOP OPENVPN, KILLING ANY CURRENT CONNECTION
+# ALSO, RESET UFW TO ALLOW OUTBOUND CONNECTIONS
 service_stop() {
 	echo "[ $(date) ]: service_stop() FUNCTION STARTED" >> $LOGLOCATION
 
         # SLEEP FOR 1 SECOND INDEFINITELY UNTIL THE OPENVPN SERVICE IS STOPPED
-        while [ "0" != `sudo ifconfig | grep tun0 | wc -l` ]; do
+        while [ "0" != `sudo ifconfig | grep $VPNINTERFACE | wc -l` ]; do
 		echo "[ $(date) ]: STOPPING OPENVPN SYSTEMCTL" >> $LOGLOCATION
 		systemctl stop openvpn
                 sleep 1
@@ -61,12 +123,12 @@ service_start() {
 	# HIT. ONCE THAT HAPPENS, WE BREAK OUT OF THE CURRENT FUNCTION AND
 	# CONTINUE ON
 	COUNTER=0
-        while [ "0" == `sudo ifconfig | grep tun0 | wc -l` ]; do
+        while [ "0" == `sudo ifconfig | grep $VPNINTERFACE | wc -l` ]; do
                 sleep 1
 		COUNTER=$((COUNTER+1))
 
 		# IF OUR COUNTER INCREMENT GOES ABOVE OUR TIMEOUT LIMIT, BREAK OUT
-		if [[ $COUNTER -gt $TIMEOUT ]]
+		if [[ $COUNTER -ge $TIMEOUT ]]
 		then
 			echo "[ $(date) ]: service_start() COUNTER MAXED OUT; BREAKING FROM FUNCTION" >> $LOGLOCATION
 			break
@@ -81,7 +143,7 @@ speed_test() {
 	# BEFORE WE BEGIN TO CONDUCT A SPEED TEST, OR MODIFY OUR BESTSPEED OR BESTSPEEDPROVIDER
 	# SETTINGS, WE WANT TO MAKE SURE WE ARE CONNECTED TO THE VPN. OTHERWISE, THE SPEEDTEST
 	# WILL BE OUR OWN PROVIDER, AND THE BESTSPEEDPROVIDER WILL BE THE ONE THAT FAILED
-	while [ "0" == `sudo ifconfig | grep tun0 | wc -l` ]; do
+	while [ "0" == `sudo ifconfig | grep $VPNINTERFACE | wc -l` ]; do
 		echo "[ $(date) ]: CONNECTION TO $1 VPN FAILED. SKIPPING IT." >> $LOGLOCATION
 
 		echo "VPN CONNECTION FAILED. SKIPPING."
@@ -106,6 +168,11 @@ speed_test() {
                 BESTSPEEDPROVIDER=$1
         fi
 }
+
+# BEFORE WE DO ANYTHING, LET'S TURN OUR FIREWALL OFF SO THAT WE CAN BEGIN TESTING
+if [ "$CONFIGFIREWALL" = true ]; then
+	firewall_reset
+fi
 
 # RUN THROUGH THE LIST OF VPN CONNECTION FILES IN THE OPENVPN DIRECTORY
 TOTALFILES=$(ls -1q "$DIR"/*"$EXT" | wc -l)
@@ -164,8 +231,25 @@ then
         if [ $BESTSPEEDPROVIDER != "" ]
         then
 		echo "[ $(date) ]: SETTING VPN CONNECTION TO $BESTSPEEDPROVIDER" >> $LOGLOCATION
+		echo "[ $(date) ]: SETTING UFW RULES" >> $LOGLOCATION
 
                 echo "CONNECTING TO: $BESTSPEEDPROVIDER"
                 systemctl start openvpn@$BESTSPEEDPROVIDER.service
+
+		# WE NEED TO WAIT UNTIL THE VPN INTERFACE COMES UP, THEN WE WILL
+		# SET OUR FIREWALL RULES APPROPRIATELY USING THE IP ADDRESS OF OUR TUNNEL
+		while [ "0" == `sudo ifconfig | grep $VPNINTERFACE | wc -l` ]; do
+			sleep 1
+		done
+
+		# GET THE VPN INTERFACE IP ADDRESS
+		TUNIP=$(ip addr show $VPNINTERFACE | grep -Po 'inet \K[\d.]+')
+		TUNPORT=$(awk '/^remote /{print $3}' $DIR/$BESTSPEEDPROVIDER$EXT)
+
+		echo "[ $(date) ]: VPN IP ADDRESS IS $TUNIP" >> $LOGLOCATION
+
+		# NOW LET'S TURN THE FIREWALL ON
+		echo "[ $(date) ]: STARTING THE FIREWALL (IF THAT HAS BEEN ALLOWED)" >> $LOGLOCATION
+		firewall_on $TUNIP $TUNPORT
         fi
 fi
